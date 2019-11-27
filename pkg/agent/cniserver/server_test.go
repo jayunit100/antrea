@@ -328,10 +328,10 @@ func TestValidateOVSPort(t *testing.T) {
 	hostIface := &current.Interface{Name: hostIfaceName}
 	result.Interfaces = []*current.Interface{hostIface, containerIface}
 	portUUID := uuid.New().String()
-	containerConfig := buildContainerConfig(containerID, testPodName, testPodNamespace, containerIface, result.IPs)
-	containerConfig.OVSPortConfig = &interfacestore.OVSPortConfig{PortUUID: portUUID, IfaceName: hostIfaceName}
+	containerConfig := buildContainerConfig(hostIfaceName, containerID, testPodName, testPodNamespace, containerIface, result.IPs)
+	containerConfig.OVSPortConfig = &interfacestore.OVSPortConfig{PortUUID: portUUID}
 
-	ifaceStore.AddInterface(hostIfaceName, containerConfig)
+	ifaceStore.AddInterface(containerConfig)
 	err := podConfigurator.validateOVSPort(hostIfaceName, containerMACStr, containerID, result.IPs)
 	assert.Nil(t, err, "Failed to validate OVS port configuration")
 }
@@ -369,13 +369,19 @@ func TestRemoveInterface(t *testing.T) {
 		cniConfig.ContainerId = containerID
 		cniConfig.Netns = ""
 
-		containerConfig = interfacestore.NewContainerInterface(containerID, podName, testPodNamespace, "", containerMAC, containerIP)
-		containerConfig.OVSPortConfig = &interfacestore.OVSPortConfig{hostIfaceName, fakePortUUID, 0}
+		containerConfig = interfacestore.NewContainerInterface(
+			hostIfaceName,
+			containerID,
+			podName,
+			testPodNamespace,
+			containerMAC,
+			containerIP)
+		containerConfig.OVSPortConfig = &interfacestore.OVSPortConfig{fakePortUUID, 0}
 	}
 
 	t.Run("Successful remove", func(t *testing.T) {
 		setup("test1")
-		ifaceStore.AddInterface(hostIfaceName, containerConfig)
+		ifaceStore.AddInterface(containerConfig)
 
 		mockOFClient.EXPECT().UninstallPodFlows(hostIfaceName).Return(nil)
 		mockOVSBridgeClient.EXPECT().DeletePort(fakePortUUID).Return(nil)
@@ -388,7 +394,7 @@ func TestRemoveInterface(t *testing.T) {
 
 	t.Run("Error in OVS port delete", func(t *testing.T) {
 		setup("test2")
-		ifaceStore.AddInterface(hostIfaceName, containerConfig)
+		ifaceStore.AddInterface(containerConfig)
 
 		mockOVSBridgeClient.EXPECT().DeletePort(fakePortUUID).Return(ovsconfig.NewTransactionError(fmt.Errorf("error while deleting OVS port"), true))
 		mockOFClient.EXPECT().UninstallPodFlows(hostIfaceName).Return(nil)
@@ -401,7 +407,7 @@ func TestRemoveInterface(t *testing.T) {
 
 	t.Run("Error in Pod flows delete", func(t *testing.T) {
 		setup("test3")
-		ifaceStore.AddInterface(hostIfaceName, containerConfig)
+		ifaceStore.AddInterface(containerConfig)
 
 		mockOFClient.EXPECT().UninstallPodFlows(hostIfaceName).Return(fmt.Errorf("failed to delete openflow entry"))
 
@@ -416,7 +422,7 @@ func TestBuildOVSPortExternalIDs(t *testing.T) {
 	containerID := uuid.New().String()
 	containerMAC, _ := net.ParseMAC("aa:bb:cc:dd:ee:ff")
 	containerIP := net.ParseIP("10.1.2.100")
-	containerConfig := interfacestore.NewContainerInterface(containerID, "test-1", "t1", "", containerMAC, containerIP)
+	containerConfig := interfacestore.NewContainerInterface("pod1-abcd", containerID, "test-1", "t1", containerMAC, containerIP)
 	externalIds := BuildOVSPortExternalIDs(containerConfig)
 	parsedIP, existed := externalIds[ovsExternalIDIP]
 	if !existed || parsedIP != "10.1.2.100" {
