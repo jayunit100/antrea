@@ -40,14 +40,15 @@ type Client interface {
 	// the Cluster Service CIDR as a parameter.
 	InstallClusterServiceCIDRFlows(serviceNet *net.IPNet, gatewayOFPort uint32) error
 
-	// InstallTunnelFlows sets up flows related to an OVS tunnel port, the tunnel port must exist.
-	InstallTunnelFlows(tunnelOFPort uint32) error
+	// InstallDefaultTunnelFlows sets up the classification flow for the default (flow based) tunnel.
+	InstallDefaultTunnelFlows(tunnelOFPort uint32) error
 
 	// InstallNodeFlows should be invoked when a connection to a remote Node is going to be set
-	// up. The hostname is used to identify the added flows. Calls to InstallNodeFlows are
-	// idempotent. Concurrent calls to InstallNodeFlows and / or UninstallNodeFlows are
-	// supported as long as they are all for different hostnames.
-	InstallNodeFlows(hostname string, localGatewayMAC net.HardwareAddr, peerGatewayIP net.IP, peerPodCIDR net.IPNet, tunnelPeerAddr net.IP) error
+	// up. The hostname is used to identify the added flows. When using the flow based tunnel,
+	// tunnelPeerIP must be provided, otherwise it should be set to nil.
+	// Calls to InstallNodeFlows are idempotent. Concurrent calls to InstallNodeFlows and / or
+	// UninstallNodeFlows are supported as long as they are all for different hostnames.
+	InstallNodeFlows(hostname string, localGatewayMAC net.HardwareAddr, peerGatewayIP net.IP, peerPodCIDR net.IPNet, tunnelPeerAddr net.IP, tunOFPort uint32) error
 
 	// UninstallNodeFlows removes the connection to the remote Node specified with the
 	// hostname. UninstallNodeFlows will do nothing if no connection to the host was established.
@@ -140,12 +141,14 @@ func (c *client) deleteFlows(cache *flowCategoryCache, flowCacheKey string) erro
 	return nil
 }
 
-func (c *client) InstallNodeFlows(hostname string, localGatewayMAC net.HardwareAddr, peerGatewayIP net.IP, peerPodCIDR net.IPNet, tunnelPeerAddr net.IP) error {
-	flows := []binding.Flow{
-		c.arpResponderFlow(peerGatewayIP),
-		c.l3FwdFlowToRemote(localGatewayMAC, peerPodCIDR, tunnelPeerAddr),
+func (c *client) InstallNodeFlows(hostname string, localGatewayMAC net.HardwareAddr, peerGatewayIP net.IP, peerPodCIDR net.IPNet, tunnelPeerAddr net.IP, tunOFPort uint32) error {
+	flows := make([]binding.Flow, 2, 3)
+	flows[0] = c.arpResponderFlow(peerGatewayIP)
+	flows[1] = c.l3FwdFlowToRemote(localGatewayMAC, peerPodCIDR, tunnelPeerAddr, tunOFPort)
+	if tunnelPeerAddr == nil {
+		// Not the default (flow based) tunnel. Add a separate tunnelClassifierFlow.
+		flows = append(flows, c.tunnelClassifierFlow(tunOFPort))
 	}
-
 	return c.addMissingFlows(c.nodeFlowCache, hostname, flows)
 }
 
@@ -190,10 +193,8 @@ func (c *client) InstallGatewayFlows(gatewayAddr net.IP, gatewayMAC net.Hardware
 	return nil
 }
 
-func (c *client) InstallTunnelFlows(tunnelOFPort uint32) error {
+func (c *client) InstallDefaultTunnelFlows(tunnelOFPort uint32) error {
 	if err := c.flowOperations.Add(c.tunnelClassifierFlow(tunnelOFPort)); err != nil {
-		return err
-	} else if err := c.flowOperations.Add(c.l2ForwardCalcFlow(globalVirtualMAC, tunnelOFPort)); err != nil {
 		return err
 	}
 	return nil

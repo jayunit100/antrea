@@ -342,7 +342,7 @@ func (c *Controller) createIPSecTunnelPort(nodeName string, nodeIP net.IP) (int3
 		// TODO: check if Node IP, PSK, or tunnel type changes or handle it in
 		// reconciliation.
 		if interfaceConfig.OFPort != 0 {
-			return 0, nil
+			return interfaceConfig.OFPort, nil
 		}
 	} else {
 		portName := util.GenerateTunnelInterfaceName(nodeName)
