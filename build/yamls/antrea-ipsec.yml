@@ -215,7 +215,7 @@ data:
     #serviceCIDR: 10.96.0.0/12
 
     # Whether or not to enable IPSec encryption of tunnel traffic.
-    #enableIPSecTunnel: false
+    enableIPSecTunnel: true
   antrea-cni.conf: |
     {
         "cniVersion":"0.3.0",
@@ -232,6 +232,15 @@ metadata:
     app: antrea
   name: antrea-config-5869b75fdt
   namespace: kube-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: antrea-ipsec
+  namespace: kube-system
+stringData:
+  psk: changeme
+type: Opaque
 ---
 apiVersion: v1
 kind: Service
@@ -336,12 +345,43 @@ spec:
         component: antrea-agent
     spec:
       containers:
+      - command:
+        - start_ovs_ipsec
+        image: antrea/antrea-ubuntu:latest
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - timeout 5 container_liveness_probe ovs-ipsec
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        name: antrea-ipsec
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+        volumeMounts:
+        - mountPath: /var/run/openvswitch
+          name: host-var-run-antrea
+          subPath: openvswitch
+        - mountPath: /var/log/openvswitch
+          name: host-var-log-antrea
+          subPath: openvswitch
+        - mountPath: /var/log/strongswan
+          name: host-var-log-antrea
+          subPath: strongswan
       - args:
         - --config
         - /etc/antrea/antrea-agent.conf
         command:
         - antrea-agent
         env:
+        - name: ANTREA_IPSEC_PSK
+          valueFrom:
+            secretKeyRef:
+              key: psk
+              name: antrea-ipsec
         - name: POD_NAME
           valueFrom:
             fieldRef:

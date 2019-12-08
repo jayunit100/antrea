@@ -20,10 +20,11 @@ function echoerr {
     >&2 echo "$@"
 }
 
-_usage="Usage: $0 [--mode (dev|release)] [--kind] [--keep] [--help|-h]
+_usage="Usage: $0 [--mode (dev|release)] [--kind] [--ipsec] [--keep] [--help|-h]
 Generate a YAML manifest for Antrea using Kustomize and print it to stdout.
         --mode (dev|release)  Choose the configuration variant that you need (default is 'dev')
         --kind                Generate a manifest appropriate for running Antrea in a Kind cluster
+        --ipsec               Generate a manifest with IPSec encyption of tunnel traffic enabled
         --keep                Debug flag which will preserve the generated kustomization.yml
         --help, -h            Print this message and exit
 
@@ -44,6 +45,7 @@ function print_help {
 
 MODE="dev"
 KIND=false
+IPSEC=false
 KEEP=false
 
 while [[ $# -gt 0 ]]
@@ -57,6 +59,10 @@ case $key in
     ;;
     --kind)
     KIND=true
+    shift
+    ;;
+    --ipsec)
+    IPSEC=true
     shift
     ;;
     --keep)
@@ -111,11 +117,11 @@ TMP_DIR=$(mktemp -d $KUSTOMIZATION_DIR/$MODE.XXXXXXXX)
 pushd $TMP_DIR > /dev/null
 
 touch kustomization.yml
+
 $KUSTOMIZE edit add base ../$MODE
 
 if [ "$MODE" == "dev" ]; then
-    # nothing to do for now, everything is taken care of in the overlay kustomization.yml.
-    :
+    $KUSTOMIZE edit set image antrea="antrea/antrea-ubuntu:latest"
 fi
 
 if [ "$MODE" == "release" ]; then
@@ -138,7 +144,21 @@ if $KIND; then
     $KUSTOMIZE edit add patch installCni.yml
 fi
 
-$KUSTOMIZE build
+if $IPSEC; then
+    cp ../../patches/ipsec/*.yml .
+
+    # create the K8s Secret for IPSec PSK
+    $KUSTOMIZE edit add resource ipsecSecret.yml
+    # add the PSK env variable to the antrea-agent container
+    $KUSTOMIZE edit add patch pskEnv.yml
+    # add a container to the Agent DaemonSet to run IPSec daemons
+    $KUSTOMIZE edit add patch ipsecContainer.yml
+
+    # set config option enableIPSecTunnel to true
+    $KUSTOMIZE build | sed 's/#enableIPSecTunnel: false/enableIPSecTunnel: true/'
+else
+    $KUSTOMIZE build
+fi
 
 popd > /dev/null
 

@@ -1,9 +1,5 @@
 bases:
 - ../../base
-images:
-- name: antrea
-  newName: antrea/antrea-ubuntu
-  newTag: latest
 patches:
 - path: controllerImagePullPolicy.yml
   target:
